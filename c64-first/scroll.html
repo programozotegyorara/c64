@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C64 Scroller (HTML)</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* C64 palette entries used by scroll.s */
+    --c64-black:      #000000;
+    --c64-white:      #ffffff;
+    --c64-lightblue:  #6c5eb5;
+    --c64-darkgrey:   #444444;
+    --c64-midgrey:    #6c6c6c;
+    --c64-lightgrey:  #959595;
+
+    /* 8x8 char cell scaled up */
+    --cell: 16px;
+    --cols: 40;
+    --rows: 25;
+  }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--c64-lightblue); /* C64 border */
+    display: grid;
+    place-items: center;
+    font-family: 'Press Start 2P', ui-monospace, monospace;
+    image-rendering: pixelated;
+    -webkit-font-smoothing: none;
+  }
+
+  /* The "screen" = inner bitmap area (black background) */
+  .screen {
+    position: relative;
+    width: calc(var(--cell) * var(--cols));
+    height: calc(var(--cell) * var(--rows));
+    background: var(--c64-black);
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 0 0 calc(var(--cell) * 2) var(--c64-lightblue); /* border frame */
+  }
+
+  .row {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: var(--cell);
+    font-size: calc(var(--cell) * 0.9);
+    line-height: var(--cell);
+    letter-spacing: calc(var(--cell) * 0.1);
+    white-space: pre;
+    color: var(--c64-lightblue);
+    text-transform: uppercase;
+  }
+
+  /* Row 12 = scroller. Position absolute so we can sub-pixel shift. */
+  #scrollRow {
+    top: calc(var(--cell) * 12);
+    color: var(--c64-white);
+    will-change: transform;
+  }
+
+  /* 38-column mode: mask one char on each side of the scroll row
+     so characters don't pop in/out at the edges. */
+  #scrollRow::before,
+  #scrollRow::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    width: var(--cell);
+    height: 100%;
+    background: var(--c64-black);
+    z-index: 2;
+  }
+  #scrollRow::before { left: 0; }
+  #scrollRow::after  { right: 0; }
+
+  #scrollText {
+    display: inline-block;
+    padding-left: calc(var(--cell) * 7 / 8); /* initial xscroll = 7 px */
+  }
+</style>
+</head>
+<body>
+  <div class="screen" id="screen">
+    <div class="row" id="scrollRow"><span id="scrollText"></span></div>
+  </div>
+
+<script>
+(() => {
+  // --- Message (matches scroll.s) ---------------------------------------
+  const MESSAGE =
+    "                                        " +
+    "greetings flying out to dwaejitokki. " +
+    "i hope you are not a lamer. " +
+    "keep the scene alive!           ";
+
+  // --- Palette indices -> CSS colors ------------------------------------
+  const PAL = {
+    0x00: "#000000", // black
+    0x01: "#ffffff", // white
+    0x0b: "#444444", // dark grey
+    0x0c: "#6c6c6c", // mid grey
+    0x0f: "#959595", // light grey
+  };
+
+  // Ping-pong fade from scroll.s: black -> dk -> md -> lt -> white -> lt -> md -> dk
+  const COLOR_TABLE = [0x00, 0x0b, 0x0c, 0x0f, 0x01, 0x0f, 0x0c, 0x0b];
+  const COLOR_DELAY = 6;     // frames per color step
+  const FRAME_SKIP  = 1;     // pixels-per-frame divisor
+
+  // --- Build the visible 40-char window ---------------------------------
+  const COLS = 40;
+  const rowBuf = new Array(COLS).fill(" ");
+  let scrollPos = 0;         // index into MESSAGE for the next char to append
+  let xscroll = 7;           // 0..7, like $D016 low 3 bits
+  let frameCtr = 0;
+  let colorCtr = 0;
+  let colorIdx = 0;
+
+  const scrollRow  = document.getElementById("scrollRow");
+  const scrollText = document.getElementById("scrollText");
+
+  function renderRow() {
+    scrollText.textContent = rowBuf.join("");
+    // Translate left by (7 - xscroll) pixels at cell scale.
+    // xscroll==7 means zero shift; xscroll==0 means shifted 7 px; then wraps and we shift chars.
+    const cell = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--cell"));
+    const px = ((7 - xscroll) * cell) / 8;
+    scrollRow.style.transform = `translateX(${-px}px)`;
+  }
+
+  function doShift() {
+    // shift left one char
+    for (let i = 0; i < COLS - 1; i++) rowBuf[i] = rowBuf[i + 1];
+    // append next char from message (wrap at terminator)
+    if (scrollPos >= MESSAGE.length) scrollPos = 0;
+    rowBuf[COLS - 1] = MESSAGE[scrollPos++];
+  }
+
+  function updateColor() {
+    colorCtr++;
+    if (colorCtr < COLOR_DELAY) return;
+    colorCtr = 0;
+    const c = COLOR_TABLE[colorIdx];
+    scrollRow.style.color = PAL[c];
+    colorIdx = (colorIdx + 1) % COLOR_TABLE.length;
+  }
+
+  // --- Main loop: emulate the raster-tick ~50 Hz frame ------------------
+  let acc = 0;
+  let last = performance.now();
+  const FRAME_MS = 1000 / 50;  // PAL C64 ~ 50 Hz
+
+  function tick(now) {
+    acc += now - last;
+    last = now;
+    while (acc >= FRAME_MS) {
+      acc -= FRAME_MS;
+
+      updateColor();
+
+      frameCtr++;
+      if (frameCtr >= FRAME_SKIP) {
+        frameCtr = 0;
+        xscroll--;
+        if (xscroll < 0) {
+          xscroll = 7;
+          doShift();
+        }
+      }
+    }
+    renderRow();
+    requestAnimationFrame(tick);
+  }
+
+  // Prime the row with the message head (scroll.s starts with 40 spaces so
+  // the first visible glyph scrolls in cleanly from the right).
+  for (let i = 0; i < COLS; i++) rowBuf[i] = " ";
+  renderRow();
+  requestAnimationFrame((t) => { last = t; tick(t); });
+})();
+</script>
+</body>
+</html>

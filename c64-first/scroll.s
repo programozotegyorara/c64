@@ -207,7 +207,5 @@ color_ctr:   .byte 0
 
 message:
         .byte "                                        "
-        .byte "greetings flying out to dwaejitokki. "
-        .byte "i hope you are not a lamer. "
-        .byte "keep the scene alive!           "
+        .byte "Hello           "
         .byte 0
